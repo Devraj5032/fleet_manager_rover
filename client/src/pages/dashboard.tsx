@@ -19,7 +19,7 @@ const Dashboard = () => {
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="col-span-1">
-          <RoverList
+          <RoverList 
             className="mb-6" 
             onSelectRover={(roverId) => setSelectedRoverId(roverId)}
           />

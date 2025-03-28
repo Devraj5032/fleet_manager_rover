@@ -5,6 +5,11 @@ import {
   commandLogs, type CommandLog, type InsertCommandLog,
   roverClients, type RoverClient, type InsertRoverClient
 } from "@shared/schema";
+import { PostgresStorage } from './pg-storage';
+import { initializeDatabase } from './db';
+import { log } from './vite';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import * as schema from '@shared/schema';
 
 // Interface for all storage operations
 export interface IStorage {
@@ -85,6 +90,8 @@ export class MemStorage implements IStorage {
       identifier: "R-004",
       ipAddress: "192.168.1.104"
     });
+    
+    log('Using in-memory storage', 'storage');
   }
 
   // User operations
@@ -129,6 +136,7 @@ export class MemStorage implements IStorage {
       status: "disconnected",
       batteryLevel: 100,
       lastSeen: new Date(),
+      ipAddress: insertRover.ipAddress || null,
       metadata: {}
     };
     this.rovers.set(id, rover);
@@ -152,17 +160,36 @@ export class MemStorage implements IStorage {
   async getSensorDataByRoverId(roverId: number, limit = 100): Promise<SensorData[]> {
     return Array.from(this.sensorDataItems.values())
       .filter(data => data.roverId === roverId)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .sort((a, b) => {
+        // Handle potential null timestamps
+        const timeA = a.timestamp?.getTime() || 0;
+        const timeB = b.timestamp?.getTime() || 0;
+        return timeB - timeA;
+      })
       .slice(0, limit);
   }
   
   async createSensorData(insertData: InsertSensorData): Promise<SensorData> {
     const id = this.sensorDataCurrentId++;
+    
+    // Ensure all fields have proper values according to schema
     const data: SensorData = {
-      ...insertData,
       id,
-      timestamp: new Date()
+      roverId: insertData.roverId,
+      timestamp: new Date(),
+      batteryLevel: insertData.batteryLevel || null,
+      temperature: insertData.temperature || null,
+      humidity: insertData.humidity || null,
+      pressure: insertData.pressure || null,
+      altitude: insertData.altitude || null,
+      heading: insertData.heading || null,
+      speed: insertData.speed || null,
+      tilt: insertData.tilt || null,
+      latitude: insertData.latitude || null,
+      longitude: insertData.longitude || null,
+      signalStrength: insertData.signalStrength || null
     };
+    
     this.sensorDataItems.set(id, data);
     return data;
   }
@@ -175,17 +202,27 @@ export class MemStorage implements IStorage {
   async getCommandLogsByRoverId(roverId: number, limit = 100): Promise<CommandLog[]> {
     return Array.from(this.commandLogs.values())
       .filter(log => log.roverId === roverId)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .sort((a, b) => {
+        // Handle potential null timestamps
+        const timeA = a.timestamp?.getTime() || 0;
+        const timeB = b.timestamp?.getTime() || 0;
+        return timeB - timeA;
+      })
       .slice(0, limit);
   }
   
   async createCommandLog(insertLog: InsertCommandLog): Promise<CommandLog> {
     const id = this.commandLogCurrentId++;
+    
     const log: CommandLog = {
-      ...insertLog,
       id,
-      timestamp: new Date()
+      roverId: insertLog.roverId,
+      command: insertLog.command,
+      timestamp: new Date(),
+      status: insertLog.status || null,
+      response: insertLog.response || null
     };
+    
     this.commandLogs.set(id, log);
     return log;
   }
@@ -222,11 +259,15 @@ export class MemStorage implements IStorage {
   
   async createRoverClient(insertClient: InsertRoverClient): Promise<RoverClient> {
     const id = this.roverClientCurrentId++;
+    
     const client: RoverClient = {
-      ...insertClient,
       id,
-      lastPing: new Date()
+      roverId: insertClient.roverId,
+      lastPing: new Date(),
+      connected: insertClient.connected || null,
+      socketId: insertClient.socketId || null
     };
+    
     this.roverClients.set(id, client);
     return client;
   }
@@ -245,4 +286,26 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// Default to in-memory storage initially
+let storageImplementation: IStorage = new MemStorage();
+
+/**
+ * Initialize storage system based on environment configuration
+ * If DATABASE_URL is provided, PostgreSQL will be used
+ * Otherwise, in-memory storage will be used
+ */
+export async function initializeStorage(): Promise<IStorage> {
+  // Try to initialize PostgreSQL database
+  const db = await initializeDatabase();
+  
+  // If database connection was successful, use PostgreSQL storage
+  if (db) {
+    log('Switching to PostgreSQL storage', 'storage');
+    storageImplementation = new PostgresStorage(db);
+  }
+  
+  return storageImplementation;
+}
+
+// Export a reference to the current storage implementation
+export const storage: IStorage = storageImplementation;
